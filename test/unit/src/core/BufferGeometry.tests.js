@@ -8,6 +8,7 @@ import {
 } from '../../../../src/core/BufferAttribute.js';
 import { Vector3 } from '../../../../src/math/Vector3.js';
 import { Matrix4 } from '../../../../src/math/Matrix4.js';
+import { Matrix3 } from '../../../../src/math/Matrix3.js';
 import { Quaternion } from '../../../../src/math/Quaternion.js';
 import { Sphere } from '../../../../src/math/Sphere.js';
 import { x, y, z } from '../../utils/math-constants.js';
@@ -218,6 +219,200 @@ export default QUnit.module( 'Core', () => {
 			assert.ok( position[ 0 ] === m[ 12 ] && position[ 1 ] === m[ 13 ] && position[ 2 ] === m[ 14 ], 'position was extracted from matrix' );
 			assert.ok( position[ 3 ] === m[ 12 ] && position[ 4 ] === m[ 13 ] && position[ 5 ] === m[ 14 ], 'position was extracted from matrix twice' );
 			assert.ok( geometry.attributes.position.version === 1, 'version was increased during update' );
+
+		} );
+
+		QUnit.test( 'applyMatrix4 - morphAttributes (absolute)', ( assert ) => {
+
+			const geometry = new BufferGeometry();
+
+			geometry.setAttribute( 'position', new BufferAttribute( new Float32Array( [
+				0, 0, 0,
+				1, 0, 0
+			] ), 3 ) );
+
+			geometry.setAttribute( 'normal', new BufferAttribute( new Float32Array( [
+				0, 0, 1,
+				1, 0, 0
+			] ), 3 ) );
+
+			// absolute morph targets store full positions/normals (morphTargetsRelative = false)
+
+			geometry.morphAttributes.position = [ new BufferAttribute( new Float32Array( [
+				0, 1, 0,
+				1, 1, 0
+			] ), 3 ) ];
+
+			geometry.morphAttributes.normal = [ new BufferAttribute( new Float32Array( [
+				0, 1, 0,
+				0, 0, 1
+			] ), 3 ) ];
+
+			const matrix = new Matrix4().makeTranslation( 10, 20, 30 );
+
+			geometry.applyMatrix4( matrix );
+
+			const morphPosition = geometry.morphAttributes.position[ 0 ].array;
+
+			// absolute positions are translated like the base position attribute
+
+			assert.ok(
+				morphPosition[ 0 ] === 10 && morphPosition[ 1 ] === 21 && morphPosition[ 2 ] === 30 &&
+				morphPosition[ 3 ] === 11 && morphPosition[ 4 ] === 21 && morphPosition[ 5 ] === 30,
+				'absolute position morph target was translated'
+			);
+
+			assert.ok( geometry.morphAttributes.position[ 0 ].version === 1, 'position morph target was marked for update' );
+
+			const morphNormal = geometry.morphAttributes.normal[ 0 ].array;
+
+			// translations must not affect normals
+
+			assert.ok(
+				morphNormal[ 0 ] === 0 && morphNormal[ 1 ] === 1 && morphNormal[ 2 ] === 0 &&
+				morphNormal[ 3 ] === 0 && morphNormal[ 4 ] === 0 && morphNormal[ 5 ] === 1,
+				'normal morph target is unaffected by translation'
+			);
+
+			assert.ok( geometry.morphAttributes.normal[ 0 ].version === 1, 'normal morph target was marked for update' );
+
+		} );
+
+		QUnit.test( 'applyMatrix4 - morphAttributes (relative)', ( assert ) => {
+
+			const geometry = new BufferGeometry();
+
+			geometry.setAttribute( 'position', new BufferAttribute( new Float32Array( [
+				0, 0, 0,
+				1, 0, 0
+			] ), 3 ) );
+
+			geometry.setAttribute( 'normal', new BufferAttribute( new Float32Array( [
+				0, 0, 1,
+				1, 0, 0
+			] ), 3 ) );
+
+			// relative morph targets store offsets/deltas (morphTargetsRelative = true)
+
+			geometry.morphTargetsRelative = true;
+
+			geometry.morphAttributes.position = [ new BufferAttribute( new Float32Array( [
+				0, 1, 0,
+				0, 1, 0
+			] ), 3 ) ];
+
+			const matrix = new Matrix4().makeTranslation( 10, 20, 30 );
+
+			geometry.applyMatrix4( matrix );
+
+			const morphPosition = geometry.morphAttributes.position[ 0 ].array;
+
+			// relative offsets must not pick up the translation component
+
+			assert.ok(
+				morphPosition[ 0 ] === 0 && morphPosition[ 1 ] === 1 && morphPosition[ 2 ] === 0 &&
+				morphPosition[ 3 ] === 0 && morphPosition[ 4 ] === 1 && morphPosition[ 5 ] === 0,
+				'relative position morph target keeps its offset under translation'
+			);
+
+			// a non-uniform scale must still scale the linear part of the offset
+
+			geometry.applyMatrix4( new Matrix4().makeScale( 2, 3, 4 ) );
+
+			const scaledMorphPosition = geometry.morphAttributes.position[ 0 ].array;
+
+			assert.ok(
+				scaledMorphPosition[ 0 ] === 0 && scaledMorphPosition[ 1 ] === 3 && scaledMorphPosition[ 2 ] === 0 &&
+				scaledMorphPosition[ 3 ] === 0 && scaledMorphPosition[ 4 ] === 3 && scaledMorphPosition[ 5 ] === 0,
+				'relative position morph target is scaled by the linear part of the matrix'
+			);
+
+			// normal morph targets are direction vectors and therefore follow the normal
+			// matrix of the transformation (inverse transpose), just like the base normal
+			// attribute. Use a separate geometry so translation/scale steps do not accumulate
+
+			const normalGeometry = new BufferGeometry();
+
+			normalGeometry.setAttribute( 'position', new BufferAttribute( new Float32Array( [
+				0, 0, 0,
+				1, 0, 0
+			] ), 3 ) );
+
+			normalGeometry.morphTargetsRelative = true;
+
+			normalGeometry.morphAttributes.normal = [ new BufferAttribute( new Float32Array( [
+				1, 0, 0,
+				0, 1, 0
+			] ), 3 ) ];
+
+			normalGeometry.applyMatrix4( new Matrix4().makeTranslation( 10, 20, 30 ) );
+
+			let morphNormal = normalGeometry.morphAttributes.normal[ 0 ].array;
+
+			assert.ok(
+				morphNormal[ 0 ] === 1 && morphNormal[ 1 ] === 0 && morphNormal[ 2 ] === 0 &&
+				morphNormal[ 3 ] === 0 && morphNormal[ 4 ] === 1 && morphNormal[ 5 ] === 0,
+				'relative normal morph target is unaffected by translation'
+			);
+
+			// scale (2, 1, 1): the normal matrix is diag(0.5, 1, 1), +X normalizes back to
+			// +X while +Y stays +Y; compare against the same computation used for base normals
+
+			normalGeometry.applyMatrix4( new Matrix4().makeScale( 2, 1, 1 ) );
+
+			const expectedX = new Vector3( 1, 0, 0 ).applyNormalMatrix(
+				new Matrix3().getNormalMatrix( new Matrix4().makeScale( 2, 1, 1 ) )
+			);
+			const expectedY = new Vector3( 0, 1, 0 ).applyNormalMatrix(
+				new Matrix3().getNormalMatrix( new Matrix4().makeScale( 2, 1, 1 ) )
+			);
+
+			morphNormal = normalGeometry.morphAttributes.normal[ 0 ].array;
+
+			assert.ok(
+				Math.abs( morphNormal[ 0 ] - expectedX.x ) < Number.EPSILON &&
+				Math.abs( morphNormal[ 1 ] - expectedX.y ) < Number.EPSILON &&
+				Math.abs( morphNormal[ 2 ] - expectedX.z ) < Number.EPSILON &&
+				Math.abs( morphNormal[ 3 ] - expectedY.x ) < Number.EPSILON &&
+				Math.abs( morphNormal[ 4 ] - expectedY.y ) < Number.EPSILON &&
+				Math.abs( morphNormal[ 5 ] - expectedY.z ) < Number.EPSILON,
+				'relative normal morph target is transformed by the normal matrix'
+			);
+
+			// a rotated geometry keeps its transformed normals in sync with the base normals
+
+			const rotatedGeometry = new BufferGeometry();
+
+			rotatedGeometry.setAttribute( 'normal', new BufferAttribute( new Float32Array( [
+				1, 0, 0,
+				0, 1, 0
+			] ), 3 ) );
+
+			rotatedGeometry.morphTargetsRelative = true;
+
+			rotatedGeometry.morphAttributes.normal = [ new BufferAttribute( new Float32Array( [
+				1, 0, 0,
+				0, 1, 0
+			] ), 3 ) ];
+
+			rotatedGeometry.applyMatrix4( new Matrix4().makeRotationZ( Math.PI / 2 ) );
+
+			const baseNormal = rotatedGeometry.attributes.normal.array;
+			const rotatedMorphNormal = rotatedGeometry.morphAttributes.normal[ 0 ].array;
+
+			assert.ok(
+				bufferAttributeEquals(
+					rotatedGeometry.morphAttributes.normal[ 0 ],
+					new BufferAttribute( new Float32Array( baseNormal ), 3 )
+				),
+				'rotated normal morph target matches the rotated base normal attribute'
+			);
+
+			assert.ok(
+				Math.abs( rotatedMorphNormal[ 0 ] - 0 ) < Number.EPSILON &&
+				Math.abs( rotatedMorphNormal[ 1 ] - 1 ) < Number.EPSILON,
+				'rotated normal morph target points into the rotated direction'
+			);
 
 		} );
 

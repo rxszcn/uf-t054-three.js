@@ -388,10 +388,11 @@ class BufferGeometry extends EventDispatcher {
 		}
 
 		const normal = this.attributes.normal;
+		let normalMatrix = null;
 
 		if ( normal !== undefined ) {
 
-			const normalMatrix = new Matrix3().getNormalMatrix( matrix );
+			normalMatrix = new Matrix3().getNormalMatrix( matrix );
 
 			normal.applyNormalMatrix( normalMatrix );
 
@@ -406,6 +407,71 @@ class BufferGeometry extends EventDispatcher {
 			tangent.transformDirection( matrix );
 
 			tangent.needsUpdate = true;
+
+		}
+
+		// morph attributes represent geometry data in the same coordinate system as the
+		// base attributes, so they must be transformed together. Position morph targets
+		// are absolute positions or relative offsets (see morphTargetsRelative), while
+		// normal morph targets are always direction vectors. Other morph attributes
+		// (e.g. color) do not describe spatial data and are left untouched.
+
+		const morphPosition = this.morphAttributes.position;
+
+		if ( morphPosition !== undefined ) {
+
+			if ( this.morphTargetsRelative ) {
+
+				// relative offsets only contain the linear part of the transformation;
+				// the translation component cancels out when the offset is applied
+
+				const linearMatrix = new Matrix3().setFromMatrix4( matrix );
+
+				for ( let i = 0, il = morphPosition.length; i < il; i ++ ) {
+
+					const morphAttribute = morphPosition[ i ];
+
+					morphAttribute.applyMatrix3( linearMatrix );
+
+					morphAttribute.needsUpdate = true;
+
+				}
+
+			} else {
+
+				for ( let i = 0, il = morphPosition.length; i < il; i ++ ) {
+
+					const morphAttribute = morphPosition[ i ];
+
+					morphAttribute.applyMatrix4( matrix );
+
+					morphAttribute.needsUpdate = true;
+
+				}
+
+			}
+
+		}
+
+		const morphNormal = this.morphAttributes.normal;
+
+		if ( morphNormal !== undefined ) {
+
+			if ( normalMatrix === null ) {
+
+				normalMatrix = new Matrix3().getNormalMatrix( matrix );
+
+			}
+
+			for ( let i = 0, il = morphNormal.length; i < il; i ++ ) {
+
+				const morphAttribute = morphNormal[ i ];
+
+				morphAttribute.applyNormalMatrix( normalMatrix );
+
+				morphAttribute.needsUpdate = true;
+
+			}
 
 		}
 
